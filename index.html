@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Naruto Hand Tracking</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      overflow: hidden;
+      background: #000;
+      font-family: sans-serif;
+    }
+
+    #v_src {
+      position: absolute; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 1;
+    }
+
+    #out {
+      position: absolute; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .darkness {
+      position: absolute; top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(8, 4, 0, 0.25);
+      mix-blend-mode: multiply;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .fx {
+      position: absolute;
+      top: 0; left: 0;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      display: none;
+      mix-blend-mode: screen;
+      z-index: 20;
+      height: auto;
+      will-change: transform, opacity;
+    }
+
+    #n { width: 1400px; }
+    #s { width: 2000px; }
+
+    /* ── Unlock overlay ── */
+    #unlock-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0,0,0,0.82);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      cursor: pointer;
+      transition: opacity 0.4s;
+    }
+
+    #unlock-overlay .icon {
+      font-size: 64px;
+      line-height: 1;
+    }
+
+    #unlock-overlay p {
+      color: #fff;
+      font-size: 22px;
+      letter-spacing: 0.04em;
+      opacity: 0.85;
+    }
+
+    #unlock-overlay .hint {
+      font-size: 14px;
+      opacity: 0.5;
+      color: #fff;
+    }
+
+    #unlock-overlay .btn {
+      margin-top: 8px;
+      padding: 14px 40px;
+      border: 1.5px solid rgba(255,255,255,0.5);
+      border-radius: 40px;
+      color: #fff;
+      font-size: 16px;
+      background: rgba(255,255,255,0.08);
+      cursor: pointer;
+      letter-spacing: 0.06em;
+      transition: background 0.2s;
+    }
+
+    #unlock-overlay .btn:hover {
+      background: rgba(255,255,255,0.18);
+    }
+
+    /* ── HUD ── */
+    #hud {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 32px;
+      z-index: 50;
+      pointer-events: none;
+    }
+
+    .hud-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hud-label {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+    }
+
+    .hud-bar-bg {
+      width: 100px;
+      height: 5px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .hud-bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 3px;
+      transition: width 0.05s linear;
+    }
+
+    #bar-n { background: #f97316; }
+    #bar-s { background: #38bdf8; }
+
+    .hud-name {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.6);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Unlock screen -->
+  <div id="unlock-overlay">
+    <div class="icon">🌀</div>
+    <p>Naruto Hand Tracking</p>
+    <div class="hint">Requires camera + audio access</div>
+    <div class="btn">Tap to Begin</div>
+  </div>
+
+  <!-- Camera feed -->
+  <video id="v_src" autoplay playsinline></video>
+  <canvas id="out"></canvas>
+  <div class="darkness"></div>
+
+  <!-- Effects -->
+  <video id="n" class="fx" src="assets/naruto.mp4" muted playsinline loop></video>
+  <video id="s" class="fx" src="assets/sasuke.mp4" muted playsinline loop></video>
+
+  <!-- Audio -->
+  <audio id="rasengan" src="assets/rasengan.mp3" preload="auto"></audio>
+  <audio id="chidori"  src="assets/chidori.mp3"  preload="auto"></audio>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="hud-card">
+      <div class="hud-label">Left hand</div>
+      <div class="hud-bar-bg"><div class="hud-bar-fill" id="bar-n"></div></div>
+      <div class="hud-name">Rasengan 🌀</div>
+    </div>
+    <div class="hud-card">
+      <div class="hud-label">Right hand</div>
+      <div class="hud-bar-bg"><div class="hud-bar-fill" id="bar-s"></div></div>
+      <div class="hud-name">Chidori ⚡</div>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    /* ── DOM refs ── */
+    const vEl   = document.getElementById('v_src');
+    const cEl   = document.getElementById('out');
+    const ctx   = cEl.getContext('2d');
+    const nVid  = document.getElementById('n');
+    const sVid  = document.getElementById('s');
+    const rAud  = document.getElementById('rasengan');
+    const cAud  = document.getElementById('chidori');
+    const overlay = document.getElementById('unlock-overlay');
+    const barN  = document.getElementById('bar-n');
+    const barS  = document.getElementById('bar-s');
+
+    rAud.volume = 0.75;
+    cAud.volume = 0.75;
+
+    /* ── Audio unlock ── */
+    let audioUnlocked = false;
+
+    function unlockAudio() {
+      if (audioUnlocked) return;
+      audioUnlocked = true;
+
+      [rAud, cAud].forEach(a => {
+        a.play().catch(() => {});
+        setTimeout(() => { a.pause(); a.currentTime = 0; }, 80);
+      });
+
+      nVid.play().catch(() => {});
+      sVid.play().catch(() => {});
+
+      overlay.style.opacity = '0';
+      setTimeout(() => { overlay.style.display = 'none'; }, 400);
+    }
+
+    overlay.addEventListener('click', unlockAudio);
+
+    /* ── State ──
+       MediaPipe labels are from camera perspective (mirrored).
+       "Right" in MediaPipe = user's LEFT hand (because of mirror flip on canvas).
+       So:  label "Right" → Rasengan (Naruto / left)
+            label "Left"  → Chidori  (Sasuke / right)
+    */
+    const pwr     = { R: 0, L: 0 };   // R = MediaPipe Right = user left
+    const wasOpen = { R: false, L: false };
+    const audPlaying = { R: false, L: false };
+
+    /* ── Resize canvas to match video ── */
+    function syncCanvasSize() {
+      if (vEl.videoWidth && vEl.videoHeight) {
+        cEl.width  = vEl.videoWidth;
+        cEl.height = vEl.videoHeight;
+      }
+    }
+
+    vEl.addEventListener('loadedmetadata', syncCanvasSize);
+    window.addEventListener('resize', syncCanvasSize);
+
+    /* ── Hand open / closed detection ──
+       Uses finger-tip vs pip distance from wrist.
+       Counts extended fingers; thumb handled separately via MCP angle.
+    */
+    function isHandOpen(pts) {
+      const wrist = pts[0];
+      let extended = 0;
+
+      // Fingers: index(8/6), middle(12/10), ring(16/14), pinky(20/18)
+      const tips = [8, 12, 16, 20];
+      const pips = [6, 10, 14, 18];
+      for (let i = 0; i < 4; i++) {
+        const tipDist = Math.hypot(pts[tips[i]].x - wrist.x, pts[tips[i]].y - wrist.y);
+        const pipDist = Math.hypot(pts[pips[i]].x - wrist.x, pts[pips[i]].y - wrist.y);
+        if (tipDist > pipDist * 1.1) extended++;
+      }
+
+      // Thumb: tip (4) vs IP (3) vs MCP (2)
+      const thumbExtended = Math.hypot(pts[4].x - pts[2].x, pts[4].y - pts[2].y) >
+                            Math.hypot(pts[3].x - pts[2].x, pts[3].y - pts[2].y) * 1.15;
+
+      return extended >= 3 || (extended >= 2 && thumbExtended);
+    }
+
+    /* ── Play audio safely (no overlap glitch) ── */
+    function playSound(aud, key) {
+      if (audPlaying[key]) return;
+      audPlaying[key] = true;
+      aud.currentTime = 0;
+      aud.play().catch(() => {});
+      aud.onended = () => { audPlaying[key] = false; };
+    }
+
+    function stopSound(aud, key) {
+      if (!audPlaying[key]) return;
+      audPlaying[key] = false;
+      aud.pause();
+      aud.currentTime = 0;
+    }
+
+    /* ── Map normalised landmark coords → screen px ──
+       Canvas is CSS-scaled to cover the viewport via object-fit:cover.
+       We need the same transform for positioning effect overlays.
+    */
+    function landmarkToScreen(nx, ny) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const vr = vEl.videoWidth  / vEl.videoHeight;
+      const sr = vw / vh;
+
+      let drawW, drawH, offX, offY;
+      if (sr > vr) {
+        drawW = vw; drawH = vw / vr;
+        offX = 0;  offY = (vh - drawH) / 2;
+      } else {
+        drawH = vh; drawW = vh * vr;
+        offY = 0;  offX = (vw - drawW) / 2;
+      }
+
+      // nx is in [0,1] from camera (unmirrored). Canvas is CSS-mirrored via scaleX(-1).
+      // The effect divs are NOT inside the canvas, so they need the mirrored x.
+      const sx = offX + (1 - nx) * drawW;
+      const sy = offY + ny * drawH;
+      return { x: sx, y: sy };
+    }
+
+    /* ── Position and show an effect video ── */
+    function showEffect(vid, wrist, knuckle, pval) {
+      const mid = {
+        x: (wrist.x + knuckle.x) / 2,
+        y: (wrist.y + knuckle.y) / 2
+      };
+      const pos = landmarkToScreen(mid.x, mid.y);
+      vid.style.left    = pos.x + 'px';
+      vid.style.top     = pos.y + 'px';
+      vid.style.display = 'block';
+      vid.style.opacity = Math.min(1, pval * 1.4).toFixed(3);
+    }
+
+    /* ── MediaPipe results callback ── */
+    function onResults(res) {
+      syncCanvasSize();
+      ctx.save();
+      ctx.clearRect(0, 0, cEl.width, cEl.height);
+
+      // Track which labels were seen this frame
+      const seen = { R: false, L: false };
+
+      if (res.multiHandLandmarks && res.multiHandedness) {
+        for (let i = 0; i < res.multiHandLandmarks.length; i++) {
+          const pts   = res.multiHandLandmarks[i];
+          const label = res.multiHandedness[i].label; // 'Right' or 'Left' (camera view)
+          const key   = label === 'Right' ? 'R' : 'L';
+          seen[key]   = true;
+
+          /* Skeleton drawing with glow */
+          ctx.save();
+          ctx.shadowBlur  = 14;
+          ctx.shadowColor = key === 'R' ? '#f97316' : '#38bdf8';
+          drawConnectors(ctx, pts, HAND_CONNECTIONS, {
+            color: key === 'R' ? '#fb923c' : '#7dd3fc',
+            lineWidth: 3
+          });
+          drawLandmarks(ctx, pts, {
+            color: '#ffffff',
+            fillColor: key === 'R' ? '#ea580c' : '#0284c7',
+            lineWidth: 1,
+            radius: 3
+          });
+          ctx.restore();
+
+          const open = isHandOpen(pts);
+
+          /* Power ramp */
+          if (open) {
+            pwr[key] = Math.min(1, pwr[key] + 0.06);
+          } else {
+            pwr[key] = Math.max(0, pwr[key] - 0.12);
+          }
+
+          /* Trigger on open edge */
+          if (open && !wasOpen[key]) {
+            const vid = key === 'R' ? nVid : sVid;  // R(camera)=user left=Rasengan=naruto
+            const aud = key === 'R' ? rAud : cAud;
+            vid.currentTime = 0;
+            vid.play().catch(() => {});
+            playSound(aud, key);
+          }
+
+          /* Stop sound on close */
+          if (!open && wasOpen[key]) {
+            const aud = key === 'R' ? rAud : cAud;
+            stopSound(aud, key);
+          }
+
+          wasOpen[key] = open;
+
+          /* Position effect */
+          if (pwr[key] > 0.01) {
+            const vid = key === 'R' ? nVid : sVid;
+            showEffect(vid, pts[0], pts[9], pwr[key]);
+          }
+        }
+      }
+
+      /* Decay + hide for hands not seen this frame */
+      for (const key of ['R', 'L']) {
+        if (!seen[key]) {
+          wasOpen[key] = false;
+          pwr[key] = Math.max(0, pwr[key] - 0.18);
+
+          const vid = key === 'R' ? nVid : sVid;
+          const aud = key === 'R' ? rAud : cAud;
+
+          if (pwr[key] > 0.01) {
+            vid.style.opacity = Math.min(1, pwr[key] * 1.4).toFixed(3);
+          } else {
+            vid.style.display = 'none';
+            stopSound(aud, key);
+          }
+        }
+      }
+
+      /* Update HUD bars */
+      barN.style.width = (pwr['R'] * 100).toFixed(1) + '%';
+      barS.style.width = (pwr['L'] * 100).toFixed(1) + '%';
+
+      ctx.restore();
+    }
+
+    /* ── MediaPipe Hands setup ── */
+    const hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.75,
+      minTrackingConfidence: 0.75
+    });
+
+    hands.onResults(onResults);
+
+    /* ── Camera ── */
+    const cam = new Camera(vEl, {
+      onFrame: async () => {
+        await hands.send({ image: vEl });
+      },
+      width: 1280,
+      height: 720
+    });
+
+    cam.start();
+  })();
+  </script>
+</body>
+</html>
