@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="screen-orientation" content="portrait">
   <title>Naruto Hand Tracking</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -12,23 +15,35 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
+    html, body {
       overflow: hidden;
       background: #000;
       font-family: sans-serif;
+      width: 100%;
+      height: 100%;
+      /* Prevent pull-to-refresh on mobile */
+      overscroll-behavior: none;
+      touch-action: none;
+      /* Fix for iOS Safari 100vh issue */
+      position: fixed;
+      inset: 0;
     }
 
     #v_src {
-      position: absolute; top: 0; left: 0;
-      width: 100vw; height: 100vh;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
       transform: scaleX(-1);
       z-index: 1;
     }
 
     #out {
-      position: absolute; top: 0; left: 0;
-      width: 100vw; height: 100vh;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
       transform: scaleX(-1);
       z-index: 2;
@@ -36,8 +51,10 @@
     }
 
     .darkness {
-      position: absolute; top: 0; left: 0;
-      width: 100vw; height: 100vh;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
       background: rgba(8, 4, 0, 0.25);
       mix-blend-mode: multiply;
       pointer-events: none;
@@ -56,8 +73,9 @@
       will-change: transform, opacity;
     }
 
-    #n { width: 1400px; }
-    #s { width: 2000px; }
+    /* Responsive effect sizes based on viewport */
+    #n { width: min(1400px, 90vw); }
+    #s { width: min(2000px, 120vw); }
 
     /* ── Unlock overlay ── */
     #unlock-overlay {
@@ -69,75 +87,86 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 18px;
+      gap: clamp(10px, 2.5vh, 18px);
       cursor: pointer;
       transition: opacity 0.4s;
+      /* Safe area for notched phones */
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
 
     #unlock-overlay .icon {
-      font-size: 64px;
+      font-size: clamp(40px, 10vw, 64px);
       line-height: 1;
     }
 
     #unlock-overlay p {
       color: #fff;
-      font-size: 22px;
+      font-size: clamp(16px, 4vw, 22px);
       letter-spacing: 0.04em;
       opacity: 0.85;
+      text-align: center;
+      padding: 0 20px;
     }
 
     #unlock-overlay .hint {
-      font-size: 14px;
+      font-size: clamp(11px, 2.5vw, 14px);
       opacity: 0.5;
       color: #fff;
+      text-align: center;
     }
 
     #unlock-overlay .btn {
       margin-top: 8px;
-      padding: 14px 40px;
+      padding: clamp(10px, 2vh, 14px) clamp(24px, 6vw, 40px);
       border: 1.5px solid rgba(255,255,255,0.5);
       border-radius: 40px;
       color: #fff;
-      font-size: 16px;
+      font-size: clamp(13px, 3vw, 16px);
       background: rgba(255,255,255,0.08);
       cursor: pointer;
       letter-spacing: 0.06em;
       transition: background 0.2s;
+      -webkit-tap-highlight-color: transparent;
     }
 
-    #unlock-overlay .btn:hover {
+    #unlock-overlay .btn:hover,
+    #unlock-overlay .btn:active {
       background: rgba(255,255,255,0.18);
     }
 
     /* ── HUD ── */
     #hud {
       position: fixed;
-      bottom: 24px;
+      bottom: calc(16px + env(safe-area-inset-bottom, 0px));
       left: 50%;
       transform: translateX(-50%);
       display: flex;
-      gap: 32px;
+      gap: clamp(16px, 4vw, 32px);
       z-index: 50;
       pointer-events: none;
+      padding: 0 12px;
+      width: auto;
+      max-width: 90%;
     }
 
     .hud-card {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 6px;
+      gap: clamp(3px, 0.8vh, 6px);
     }
 
     .hud-label {
-      font-size: 11px;
+      font-size: clamp(8px, 2vw, 11px);
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: rgba(255,255,255,0.45);
+      white-space: nowrap;
     }
 
     .hud-bar-bg {
-      width: 100px;
-      height: 5px;
+      width: clamp(60px, 18vw, 100px);
+      height: clamp(3px, 0.6vh, 5px);
       background: rgba(255,255,255,0.12);
       border-radius: 3px;
       overflow: hidden;
@@ -154,9 +183,24 @@
     #bar-s { background: #38bdf8; }
 
     .hud-name {
-      font-size: 12px;
+      font-size: clamp(9px, 2.2vw, 12px);
       letter-spacing: 0.08em;
       color: rgba(255,255,255,0.6);
+      white-space: nowrap;
+    }
+
+    /* ── Debug info (hidden by default) ── */
+    #debug-info {
+      position: fixed;
+      top: env(safe-area-inset-top, 8px);
+      right: 8px;
+      z-index: 90;
+      color: rgba(255,255,255,0.4);
+      font-size: 10px;
+      font-family: monospace;
+      pointer-events: none;
+      text-align: right;
+      display: none;
     }
   </style>
 </head>
@@ -197,22 +241,110 @@
     </div>
   </div>
 
+  <!-- Debug overlay -->
+  <div id="debug-info"></div>
+
   <script>
   (() => {
+    /* ── Device / Viewport Helpers ── */
+    const dpr = window.devicePixelRatio || 1;
+    const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+    // Get the TRUE viewport size (handles iOS Safari, notches, etc.)
+    function getViewport() {
+      // Use visualViewport API if available (handles keyboard, zoom)
+      if (window.visualViewport) {
+        return {
+          w: window.visualViewport.width,
+          h: window.visualViewport.height
+        };
+      }
+      // Fallback: documentElement dimensions (more reliable than innerWidth/Height on some devices)
+      return {
+        w: document.documentElement.clientWidth  || window.innerWidth,
+        h: document.documentElement.clientHeight || window.innerHeight
+      };
+    }
+
+    // Determine camera resolution based on device capability
+    function getCameraConfig() {
+      const vp = getViewport();
+      const maxDim = Math.max(vp.w, vp.h);
+
+      if (isMobile) {
+        // Mobile: use lower resolution to save performance
+        if (maxDim <= 667) {
+          // Small phones (iPhone SE, etc.)
+          return { width: 640, height: 480 };
+        }
+        // Standard/large phones
+        return { width: 960, height: 720 };
+      }
+
+      // Tablet
+      if (maxDim <= 1024) {
+        return { width: 1280, height: 720 };
+      }
+
+      // Desktop / laptop
+      if (dpr >= 2 && maxDim >= 1440) {
+        return { width: 1920, height: 1080 };
+      }
+
+      return { width: 1280, height: 720 };
+    }
+
     /* ── DOM refs ── */
-    const vEl   = document.getElementById('v_src');
-    const cEl   = document.getElementById('out');
-    const ctx   = cEl.getContext('2d');
-    const nVid  = document.getElementById('n');
-    const sVid  = document.getElementById('s');
-    const rAud  = document.getElementById('rasengan');
-    const cAud  = document.getElementById('chidori');
-    const overlay = document.getElementById('unlock-overlay');
-    const barN  = document.getElementById('bar-n');
-    const barS  = document.getElementById('bar-s');
+    const vEl      = document.getElementById('v_src');
+    const cEl      = document.getElementById('out');
+    const ctx      = cEl.getContext('2d');
+    const nVid     = document.getElementById('n');
+    const sVid     = document.getElementById('s');
+    const rAud     = document.getElementById('rasengan');
+    const cAud     = document.getElementById('chidori');
+    const overlay  = document.getElementById('unlock-overlay');
+    const barN     = document.getElementById('bar-n');
+    const barS     = document.getElementById('bar-s');
+    const debugEl  = document.getElementById('debug-info');
 
     rAud.volume = 0.75;
     cAud.volume = 0.75;
+
+    /* ── iOS-safe resize: fix the 100vh bug ── */
+    function setFullViewport() {
+      const vp = getViewport();
+      document.documentElement.style.setProperty('--vh', vp.h + 'px');
+      document.documentElement.style.setProperty('--vw', vp.w + 'px');
+
+      // Force body to exact viewport
+      document.body.style.width  = vp.w + 'px';
+      document.body.style.height = vp.h + 'px';
+
+      // Update video and canvas CSS sizes
+      [vEl, cEl].forEach(el => {
+        el.style.width  = vp.w + 'px';
+        el.style.height = vp.h + 'px';
+      });
+
+      // Darkness layer too
+      const darkness = document.querySelector('.darkness');
+      if (darkness) {
+        darkness.style.width  = vp.w + 'px';
+        darkness.style.height = vp.h + 'px';
+      }
+    }
+
+    setFullViewport();
+
+    // Listen for resize, orientation change, visual viewport changes
+    window.addEventListener('resize', setFullViewport);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(setFullViewport, 150);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', setFullViewport);
+    }
 
     /* ── Audio unlock ── */
     let audioUnlocked = false;
@@ -234,37 +366,38 @@
     }
 
     overlay.addEventListener('click', unlockAudio);
+    overlay.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      unlockAudio();
+    });
 
-    /* ── State ──
-       MediaPipe labels are from camera perspective (mirrored).
-       "Right" in MediaPipe = user's LEFT hand (because of mirror flip on canvas).
-       So:  label "Right" → Rasengan (Naruto / left)
-            label "Left"  → Chidori  (Sasuke / right)
-    */
-    const pwr     = { R: 0, L: 0 };   // R = MediaPipe Right = user left
-    const wasOpen = { R: false, L: false };
+    /* ── State ── */
+    const pwr        = { R: 0, L: 0 };
+    const wasOpen    = { R: false, L: false };
     const audPlaying = { R: false, L: false };
 
-    /* ── Resize canvas to match video ── */
+    /* ── Resize canvas to match video's intrinsic resolution (DPR-aware) ── */
     function syncCanvasSize() {
       if (vEl.videoWidth && vEl.videoHeight) {
-        cEl.width  = vEl.videoWidth;
-        cEl.height = vEl.videoHeight;
+        // Canvas drawing buffer = video resolution (no DPR scaling needed
+        // because we draw at video resolution and CSS scales it)
+        if (cEl.width !== vEl.videoWidth || cEl.height !== vEl.videoHeight) {
+          cEl.width  = vEl.videoWidth;
+          cEl.height = vEl.videoHeight;
+        }
       }
     }
 
-    vEl.addEventListener('loadedmetadata', syncCanvasSize);
-    window.addEventListener('resize', syncCanvasSize);
+    vEl.addEventListener('loadedmetadata', () => {
+      syncCanvasSize();
+      setFullViewport();
+    });
 
-    /* ── Hand open / closed detection ──
-       Uses finger-tip vs pip distance from wrist.
-       Counts extended fingers; thumb handled separately via MCP angle.
-    */
+    /* ── Hand open / closed detection ── */
     function isHandOpen(pts) {
       const wrist = pts[0];
       let extended = 0;
 
-      // Fingers: index(8/6), middle(12/10), ring(16/14), pinky(20/18)
       const tips = [8, 12, 16, 20];
       const pips = [6, 10, 14, 18];
       for (let i = 0; i < 4; i++) {
@@ -273,14 +406,13 @@
         if (tipDist > pipDist * 1.1) extended++;
       }
 
-      // Thumb: tip (4) vs IP (3) vs MCP (2)
       const thumbExtended = Math.hypot(pts[4].x - pts[2].x, pts[4].y - pts[2].y) >
                             Math.hypot(pts[3].x - pts[2].x, pts[3].y - pts[2].y) * 1.15;
 
       return extended >= 3 || (extended >= 2 && thumbExtended);
     }
 
-    /* ── Play audio safely (no overlap glitch) ── */
+    /* ── Audio helpers ── */
     function playSound(aud, key) {
       if (audPlaying[key]) return;
       audPlaying[key] = true;
@@ -297,29 +429,53 @@
     }
 
     /* ── Map normalised landmark coords → screen px ──
-       Canvas is CSS-scaled to cover the viewport via object-fit:cover.
-       We need the same transform for positioning effect overlays.
+       This is the critical function for cross-device support.
+       Must account for object-fit:cover behaviour at any aspect ratio.
     */
     function landmarkToScreen(nx, ny) {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const vr = vEl.videoWidth  / vEl.videoHeight;
+      const vp = getViewport();
+      const vw = vp.w;
+      const vh = vp.h;
+
+      // Video intrinsic aspect ratio
+      const videoW = vEl.videoWidth  || 1280;
+      const videoH = vEl.videoHeight || 720;
+      const vr = videoW / videoH;
       const sr = vw / vh;
 
       let drawW, drawH, offX, offY;
+
+      // object-fit: cover logic
       if (sr > vr) {
-        drawW = vw; drawH = vw / vr;
-        offX = 0;  offY = (vh - drawH) / 2;
+        // Viewport is wider than video → video width fills viewport, height crops
+        drawW = vw;
+        drawH = vw / vr;
+        offX = 0;
+        offY = (vh - drawH) / 2;
       } else {
-        drawH = vh; drawW = vh * vr;
-        offY = 0;  offX = (vw - drawW) / 2;
+        // Viewport is taller than video → video height fills viewport, width crops
+        drawH = vh;
+        drawW = vh * vr;
+        offY = 0;
+        offX = (vw - drawW) / 2;
       }
 
-      // nx is in [0,1] from camera (unmirrored). Canvas is CSS-mirrored via scaleX(-1).
-      // The effect divs are NOT inside the canvas, so they need the mirrored x.
+      // Mirror X (camera is CSS-mirrored, effects are NOT in canvas)
       const sx = offX + (1 - nx) * drawW;
       const sy = offY + ny * drawH;
+
       return { x: sx, y: sy };
+    }
+
+    /* ── Dynamic effect sizing based on viewport ── */
+    function getEffectScale() {
+      const vp = getViewport();
+      const minDim = Math.min(vp.w, vp.h);
+
+      if (minDim < 400) return 0.45;   // Small phone
+      if (minDim < 600) return 0.6;    // Regular phone
+      if (minDim < 900) return 0.8;    // Tablet
+      return 1.0;                       // Desktop
     }
 
     /* ── Position and show an effect video ── */
@@ -329,10 +485,13 @@
         y: (wrist.y + knuckle.y) / 2
       };
       const pos = landmarkToScreen(mid.x, mid.y);
-      vid.style.left    = pos.x + 'px';
-      vid.style.top     = pos.y + 'px';
-      vid.style.display = 'block';
-      vid.style.opacity = Math.min(1, pval * 1.4).toFixed(3);
+      const scale = getEffectScale();
+
+      vid.style.left      = pos.x + 'px';
+      vid.style.top       = pos.y + 'px';
+      vid.style.display   = 'block';
+      vid.style.opacity   = Math.min(1, pval * 1.4).toFixed(3);
+      vid.style.transform = `translate(-50%, -50%) scale(${scale})`;
     }
 
     /* ── MediaPipe results callback ── */
@@ -341,51 +500,50 @@
       ctx.save();
       ctx.clearRect(0, 0, cEl.width, cEl.height);
 
-      // Track which labels were seen this frame
       const seen = { R: false, L: false };
+
+      // Scale landmarks drawing for DPR
+      const lineW = Math.max(1, Math.round(3 * (isMobile ? 0.7 : 1)));
+      const dotR  = Math.max(2, Math.round(3 * (isMobile ? 0.8 : 1)));
 
       if (res.multiHandLandmarks && res.multiHandedness) {
         for (let i = 0; i < res.multiHandLandmarks.length; i++) {
           const pts   = res.multiHandLandmarks[i];
-          const label = res.multiHandedness[i].label; // 'Right' or 'Left' (camera view)
+          const label = res.multiHandedness[i].label;
           const key   = label === 'Right' ? 'R' : 'L';
           seen[key]   = true;
 
-          /* Skeleton drawing with glow */
           ctx.save();
-          ctx.shadowBlur  = 14;
+          ctx.shadowBlur  = isMobile ? 8 : 14;
           ctx.shadowColor = key === 'R' ? '#f97316' : '#38bdf8';
           drawConnectors(ctx, pts, HAND_CONNECTIONS, {
             color: key === 'R' ? '#fb923c' : '#7dd3fc',
-            lineWidth: 3
+            lineWidth: lineW
           });
           drawLandmarks(ctx, pts, {
             color: '#ffffff',
             fillColor: key === 'R' ? '#ea580c' : '#0284c7',
             lineWidth: 1,
-            radius: 3
+            radius: dotR
           });
           ctx.restore();
 
           const open = isHandOpen(pts);
 
-          /* Power ramp */
           if (open) {
             pwr[key] = Math.min(1, pwr[key] + 0.06);
           } else {
             pwr[key] = Math.max(0, pwr[key] - 0.12);
           }
 
-          /* Trigger on open edge */
           if (open && !wasOpen[key]) {
-            const vid = key === 'R' ? nVid : sVid;  // R(camera)=user left=Rasengan=naruto
+            const vid = key === 'R' ? nVid : sVid;
             const aud = key === 'R' ? rAud : cAud;
             vid.currentTime = 0;
             vid.play().catch(() => {});
             playSound(aud, key);
           }
 
-          /* Stop sound on close */
           if (!open && wasOpen[key]) {
             const aud = key === 'R' ? rAud : cAud;
             stopSound(aud, key);
@@ -393,7 +551,6 @@
 
           wasOpen[key] = open;
 
-          /* Position effect */
           if (pwr[key] > 0.01) {
             const vid = key === 'R' ? nVid : sVid;
             showEffect(vid, pts[0], pts[9], pwr[key]);
@@ -401,7 +558,6 @@
         }
       }
 
-      /* Decay + hide for hands not seen this frame */
       for (const key of ['R', 'L']) {
         if (!seen[key]) {
           wasOpen[key] = false;
@@ -419,7 +575,6 @@
         }
       }
 
-      /* Update HUD bars */
       barN.style.width = (pwr['R'] * 100).toFixed(1) + '%';
       barS.style.width = (pwr['L'] * 100).toFixed(1) + '%';
 
@@ -431,25 +586,71 @@
       locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
     });
 
+    // Adjust model complexity for mobile performance
     hands.setOptions({
       maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.75,
-      minTrackingConfidence: 0.75
+      modelComplexity: isMobile ? 0 : 1,
+      minDetectionConfidence: isMobile ? 0.7 : 0.75,
+      minTrackingConfidence:  isMobile ? 0.65 : 0.75
     });
 
     hands.onResults(onResults);
 
-    /* ── Camera ── */
+    /* ── Camera with device-appropriate resolution ── */
+    const camConfig = getCameraConfig();
+
     const cam = new Camera(vEl, {
       onFrame: async () => {
         await hands.send({ image: vEl });
       },
-      width: 1280,
-      height: 720
+      width:  camConfig.width,
+      height: camConfig.height,
+      // Prefer user-facing camera on mobile
+      facingMode: 'user'
     });
 
-    cam.start();
+    cam.start().catch(err => {
+      console.warn('Camera start failed, retrying with lower resolution:', err);
+      // Fallback to lowest resolution
+      const fallbackCam = new Camera(vEl, {
+        onFrame: async () => {
+          await hands.send({ image: vEl });
+        },
+        width: 640,
+        height: 480,
+        facingMode: 'user'
+      });
+      fallbackCam.start().catch(e => {
+        console.error('Camera failed completely:', e);
+        overlay.querySelector('p').textContent = 'Camera access denied';
+        overlay.querySelector('.hint').textContent = 'Please allow camera access and reload';
+      });
+    });
+
+    /* ── Prevent iOS elastic scroll / bounce ── */
+    document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+    /* ── Handle visibility change (pause/resume on tab switch) ── */
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        // Pause audio when tab hidden
+        [rAud, cAud].forEach(a => a.pause());
+      }
+    });
+
+    /* ── Wake lock to prevent screen dimming (if supported) ── */
+    async function requestWakeLock() {
+      if ('wakeLock' in navigator) {
+        try {
+          await navigator.wakeLock.request('screen');
+        } catch (e) { /* ignore */ }
+      }
+    }
+    requestWakeLock();
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) requestWakeLock();
+    });
+
   })();
   </script>
 </body>
