@@ -207,11 +207,11 @@
 <body>
 
   <!-- Unlock screen -->
-  <div id="unlock-overlay">
-    <div class="icon">🌀</div>
+  <div id="unlock-overlay" role="dialog" aria-label="Naruto Hand Tracking">
+    <div class="icon" aria-hidden="true">🌀</div>
     <p>Naruto Hand Tracking</p>
     <div class="hint">Requires camera + audio access</div>
-    <div class="btn">Tap to Begin</div>
+    <div class="btn" role="button" tabindex="0">Tap to Begin</div>
   </div>
 
   <!-- Camera feed -->
@@ -308,6 +308,15 @@
     const barS     = document.getElementById('bar-s');
     const debugEl  = document.getElementById('debug-info');
 
+    /* ── MediaPipe drawing utilities (loaded via CDN script tags) ── */
+    const drawConnectors = window.drawConnectors;
+    const drawLandmarks  = window.drawLandmarks;
+    const HAND_CONNECTIONS = window.HAND_CONNECTIONS;
+    let mediaPipeReady = !!(drawConnectors && drawLandmarks && HAND_CONNECTIONS);
+    if (!mediaPipeReady) {
+      console.warn('MediaPipe drawing utilities not loaded. Skeleton overlay will be disabled.');
+    }
+
     rAud.volume = 0.75;
     cAud.volume = 0.75;
 
@@ -348,21 +357,33 @@
 
     /* ── Audio unlock ── */
     let audioUnlocked = false;
+    let appDisabled = false;
 
     function unlockAudio() {
-      if (audioUnlocked) return;
+      if (audioUnlocked || appDisabled) return;
       audioUnlocked = true;
 
-      [rAud, cAud].forEach(a => {
-        a.play().catch(() => {});
-        setTimeout(() => { a.pause(); a.currentTime = 0; }, 80);
+      // iOS requires audio play from a direct user gesture
+      const unlockPromises = [rAud, cAud].map(a => {
+        a.muted = false;
+        return a.play().then(() => {
+          a.pause();
+          a.currentTime = 0;
+        }).catch(() => {});
       });
 
-      nVid.play().catch(() => {});
-      sVid.play().catch(() => {});
+      // Pre-load effect videos after audio is unlocked
+      Promise.all(unlockPromises).then(() => {
+        nVid.play().catch(() => {});
+        sVid.play().catch(() => {});
+      });
 
+      // Use transitionend to avoid opacity/display conflict
+      overlay.addEventListener('transitionend', function handler() {
+        overlay.removeEventListener('transitionend', handler);
+        overlay.style.display = 'none';
+      });
       overlay.style.opacity = '0';
-      setTimeout(() => { overlay.style.display = 'none'; }, 400);
     }
 
     overlay.addEventListener('click', unlockAudio);
@@ -375,6 +396,30 @@
     const pwr        = { R: 0, L: 0 };
     const wasOpen    = { R: false, L: false };
     const audPlaying = { R: false, L: false };
+
+    /* ── Landmark smoothing (EMA) ── */
+    const SMOOTHING_FACTOR = 0.45;
+    const prevLandmarks = {};
+
+    function smoothLandmarks(key, pts) {
+      if (!prevLandmarks[key]) {
+        prevLandmarks[key] = pts.map(p => ({ x: p.x, y: p.y, z: p.z || 0 }));
+        return pts;
+      }
+      const prev = prevLandmarks[key];
+      const smoothed = pts.map((p, i) => ({
+        x: prev[i].x + SMOOTHING_FACTOR * (p.x - prev[i].x),
+        y: prev[i].y + SMOOTHING_FACTOR * (p.y - prev[i].y),
+        z: prev[i].z + SMOOTHING_FACTOR * ((p.z || 0) - prev[i].z)
+      }));
+      prevLandmarks[key] = smoothed.map(p => ({ x: p.x, y: p.y, z: p.z }));
+      return smoothed;
+    }
+
+    /* ── Frame rate limiting ── */
+    const TARGET_FPS = 30;
+    const FRAME_INTERVAL = 1000 / TARGET_FPS;
+    let lastFrameTime = 0;
 
     /* ── Resize canvas to match video's intrinsic resolution (DPR-aware) ── */
     function syncCanvasSize() {
@@ -486,12 +531,24 @@
       };
       const pos = landmarkToScreen(mid.x, mid.y);
       const scale = getEffectScale();
+      const opacity = Math.min(1, pval * 1.4);
 
       vid.style.left      = pos.x + 'px';
       vid.style.top       = pos.y + 'px';
       vid.style.display   = 'block';
-      vid.style.opacity   = Math.min(1, pval * 1.4).toFixed(3);
+      vid.style.opacity   = opacity.toFixed(3);
       vid.style.transform = `translate(-50%, -50%) scale(${scale})`;
+
+      // Resume video playback if it was paused for optimization
+      if (vid.paused && opacity > 0.05) {
+        vid.play().catch(() => {});
+      }
+    }
+
+    /* ── Hide and pause an effect video ── */
+    function hideEffect(vid) {
+      vid.style.display = 'none';
+      if (!vid.paused) vid.pause();
     }
 
     /* ── MediaPipe results callback ── */
@@ -508,24 +565,28 @@
 
       if (res.multiHandLandmarks && res.multiHandedness) {
         for (let i = 0; i < res.multiHandLandmarks.length; i++) {
-          const pts   = res.multiHandLandmarks[i];
-          const label = res.multiHandedness[i].label;
-          const key   = label === 'Right' ? 'R' : 'L';
-          seen[key]   = true;
+          const rawPts = res.multiHandLandmarks[i];
+          const label  = res.multiHandedness[i].label;
+          const key    = label === 'Right' ? 'R' : 'L';
+          seen[key]    = true;
+
+          const pts = smoothLandmarks(key, rawPts);
 
           ctx.save();
           ctx.shadowBlur  = isMobile ? 8 : 14;
           ctx.shadowColor = key === 'R' ? '#f97316' : '#38bdf8';
-          drawConnectors(ctx, pts, HAND_CONNECTIONS, {
-            color: key === 'R' ? '#fb923c' : '#7dd3fc',
-            lineWidth: lineW
-          });
-          drawLandmarks(ctx, pts, {
-            color: '#ffffff',
-            fillColor: key === 'R' ? '#ea580c' : '#0284c7',
-            lineWidth: 1,
-            radius: dotR
-          });
+          if (mediaPipeReady) {
+            drawConnectors(ctx, pts, HAND_CONNECTIONS, {
+              color: key === 'R' ? '#fb923c' : '#7dd3fc',
+              lineWidth: lineW
+            });
+            drawLandmarks(ctx, pts, {
+              color: '#ffffff',
+              fillColor: key === 'R' ? '#ea580c' : '#0284c7',
+              lineWidth: 1,
+              radius: dotR
+            });
+          }
           ctx.restore();
 
           const open = isHandOpen(pts);
@@ -562,14 +623,17 @@
         if (!seen[key]) {
           wasOpen[key] = false;
           pwr[key] = Math.max(0, pwr[key] - 0.18);
+          delete prevLandmarks[key];
 
           const vid = key === 'R' ? nVid : sVid;
           const aud = key === 'R' ? rAud : cAud;
 
           if (pwr[key] > 0.01) {
             vid.style.opacity = Math.min(1, pwr[key] * 1.4).toFixed(3);
+            // Pause video if opacity is very low to save resources
+            if (pwr[key] < 0.05 && !vid.paused) vid.pause();
           } else {
-            vid.style.display = 'none';
+            hideEffect(vid);
             stopSound(aud, key);
           }
         }
@@ -582,61 +646,75 @@
     }
 
     /* ── MediaPipe Hands setup ── */
-    const hands = new Hands({
-      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
-    });
+    let hands;
+    try {
+      hands = new Hands({
+        locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+      });
 
-    // Adjust model complexity for mobile performance
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: isMobile ? 0 : 1,
-      minDetectionConfidence: isMobile ? 0.7 : 0.75,
-      minTrackingConfidence:  isMobile ? 0.65 : 0.75
-    });
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: isMobile ? 0 : 1,
+        minDetectionConfidence: isMobile ? 0.7 : 0.75,
+        minTrackingConfidence:  isMobile ? 0.65 : 0.75
+      });
 
-    hands.onResults(onResults);
+      hands.onResults(onResults);
+    } catch (err) {
+      console.error('MediaPipe Hands failed to initialize:', err);
+      appDisabled = true;
+      overlay.querySelector('p').textContent = 'Hand tracking unavailable';
+      overlay.querySelector('.hint').textContent = 'MediaPipe failed to load — please reload or try a different browser';
+      overlay.querySelector('.btn').style.display = 'none';
+    }
 
     /* ── Camera with device-appropriate resolution ── */
-    const camConfig = getCameraConfig();
+    function startCamera() {
+      if (!hands || appDisabled) return;
 
-    const cam = new Camera(vEl, {
-      onFrame: async () => {
-        await hands.send({ image: vEl });
-      },
-      width:  camConfig.width,
-      height: camConfig.height,
-      // Prefer user-facing camera on mobile
-      facingMode: 'user'
-    });
+      const camConfig = getCameraConfig();
 
-    cam.start().catch(err => {
-      console.warn('Camera start failed, retrying with lower resolution:', err);
-      // Fallback to lowest resolution
-      const fallbackCam = new Camera(vEl, {
+      const cam = new Camera(vEl, {
         onFrame: async () => {
+          const now = performance.now();
+          if (now - lastFrameTime < FRAME_INTERVAL) return;
+          lastFrameTime = now;
           await hands.send({ image: vEl });
         },
-        width: 640,
-        height: 480,
+        width:  camConfig.width,
+        height: camConfig.height,
         facingMode: 'user'
       });
-      fallbackCam.start().catch(e => {
-        console.error('Camera failed completely:', e);
-        overlay.querySelector('p').textContent = 'Camera access denied';
-        overlay.querySelector('.hint').textContent = 'Please allow camera access and reload';
+
+      cam.start().catch(err => {
+        console.warn('Camera start failed, retrying with lower resolution:', err);
+        const fallbackCam = new Camera(vEl, {
+          onFrame: async () => {
+            const now = performance.now();
+            if (now - lastFrameTime < FRAME_INTERVAL) return;
+            lastFrameTime = now;
+            await hands.send({ image: vEl });
+          },
+          width: 640,
+          height: 480,
+          facingMode: 'user'
+        });
+        fallbackCam.start().catch(e => {
+          console.error('Camera failed completely:', e);
+          appDisabled = true;
+          overlay.style.display = 'flex';
+          overlay.style.opacity = '1';
+          overlay.querySelector('p').textContent = 'Camera access denied';
+          overlay.querySelector('.hint').textContent = 'Please allow camera access and reload';
+          overlay.querySelector('.btn').style.display = 'none';
+        });
       });
-    });
+    }
+
+    startCamera();
 
     /* ── Prevent iOS elastic scroll / bounce ── */
     document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
-
-    /* ── Handle visibility change (pause/resume on tab switch) ── */
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        // Pause audio when tab hidden
-        [rAud, cAud].forEach(a => a.pause());
-      }
-    });
 
     /* ── Wake lock to prevent screen dimming (if supported) ── */
     async function requestWakeLock() {
@@ -647,8 +725,20 @@
       }
     }
     requestWakeLock();
+
+    /* ── Consolidated visibility change handler ── */
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) requestWakeLock();
+      if (document.hidden) {
+        // Pause audio and reset playback state
+        [rAud, cAud].forEach(a => a.pause());
+        audPlaying.R = false;
+        audPlaying.L = false;
+        // Pause effect videos when tab is hidden
+        if (!nVid.paused) nVid.pause();
+        if (!sVid.paused) sVid.pause();
+      } else {
+        requestWakeLock();
+      }
     });
 
   })();
