@@ -207,9 +207,9 @@
 <body>
 
   <!-- Unlock screen -->
-  <div id="unlock-overlay" role="dialog" aria-label="Naruto Hand Tracking">
+  <div id="unlock-overlay" role="dialog" aria-labelledby="unlock-title">
     <div class="icon" aria-hidden="true">🌀</div>
-    <p>Naruto Hand Tracking</p>
+    <p id="unlock-title">Naruto Hand Tracking</p>
     <div class="hint">Requires camera + audio access</div>
     <div class="btn" role="button" tabindex="0">Tap to Begin</div>
   </div>
@@ -391,6 +391,12 @@
       e.preventDefault();
       unlockAudio();
     });
+    overlay.querySelector('.btn').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        unlockAudio();
+      }
+    });
 
     /* ── State ── */
     const pwr        = { R: 0, L: 0 };
@@ -398,8 +404,9 @@
     const audPlaying = { R: false, L: false };
 
     /* ── Landmark smoothing (EMA) ── */
-    const SMOOTHING_FACTOR = 0.45;
+    const EMA_SMOOTHING_FACTOR = 0.45;
     const prevLandmarks = {};
+    const VIDEO_PAUSE_THRESHOLD = 0.05;
 
     function smoothLandmarks(key, pts) {
       if (!prevLandmarks[key]) {
@@ -408,9 +415,9 @@
       }
       const prev = prevLandmarks[key];
       const smoothed = pts.map((p, i) => ({
-        x: prev[i].x + SMOOTHING_FACTOR * (p.x - prev[i].x),
-        y: prev[i].y + SMOOTHING_FACTOR * (p.y - prev[i].y),
-        z: prev[i].z + SMOOTHING_FACTOR * ((p.z || 0) - prev[i].z)
+        x: prev[i].x + EMA_SMOOTHING_FACTOR * (p.x - prev[i].x),
+        y: prev[i].y + EMA_SMOOTHING_FACTOR * (p.y - prev[i].y),
+        z: prev[i].z + EMA_SMOOTHING_FACTOR * ((p.z || 0) - prev[i].z)
       }));
       prevLandmarks[key] = smoothed.map(p => ({ x: p.x, y: p.y, z: p.z }));
       return smoothed;
@@ -540,7 +547,7 @@
       vid.style.transform = `translate(-50%, -50%) scale(${scale})`;
 
       // Resume video playback if it was paused for optimization
-      if (vid.paused && opacity > 0.05) {
+      if (vid.paused && opacity > VIDEO_PAUSE_THRESHOLD) {
         vid.play().catch(() => {});
       }
     }
@@ -631,7 +638,7 @@
           if (pwr[key] > 0.01) {
             vid.style.opacity = Math.min(1, pwr[key] * 1.4).toFixed(3);
             // Pause video if opacity is very low to save resources
-            if (pwr[key] < 0.05 && !vid.paused) vid.pause();
+            if (pwr[key] < VIDEO_PAUSE_THRESHOLD && !vid.paused) vid.pause();
           } else {
             hideEffect(vid);
             stopSound(aud, key);
